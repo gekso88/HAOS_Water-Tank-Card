@@ -1,5 +1,9 @@
-/* Standalone Home Assistant card. No changes to firmware or phone notifications. */
+/* Water Tank Card 1.2.0 — standalone card and visual editor. */
 class WaterTankCard extends HTMLElement {
+  static getConfigElement() {
+    return document.createElement('water-tank-card-editor');
+  }
+
   // Home Assistant renders the native entity pickers, expandable sections and preview.
   static getConfigForm() {
     const numericEntity = { entity: { domain: ['sensor', 'number', 'input_number'] } };
@@ -73,8 +77,8 @@ class WaterTankCard extends HTMLElement {
   }
 
   setConfig(config) {
-    if (!config.entity || !config.threshold_entity) {
-      throw new Error('Укажите entity и threshold_entity');
+    if (!config || typeof config !== 'object' || Array.isArray(config)) {
+      throw new Error('Некорректные настройки карточки');
     }
     this.stop();
     this.config = { name: 'Бак воды', ...config };
@@ -254,7 +258,8 @@ class WaterTankCard extends HTMLElement {
     root.querySelector('.vessel').setAttribute('aria-label', `${this.shapes[this.shape]}, ${root.querySelector('.percent').textContent}, ${root.querySelector('.liters').textContent}`);
     const distance = this.number(this.config.distance_entity);
     root.querySelector('.meta').textContent = `Порог: ${threshold === null ? '—' : Number(threshold.toFixed(1))}% · Расстояние: ${distance !== null && distance >= 0 ? distance.toFixed(1) + ' см' : 'нет данных'}`;
-    root.querySelector('.alarm').textContent = !valid ? 'Нет достоверных данных' : this.low ?
+    const configured = !!this.config.entity && !!this.config.threshold_entity;
+    root.querySelector('.alarm').textContent = !configured ? 'Выберите датчик уровня и нижний порог в визуальном редакторе карточки' : !valid ? 'Нет достоверных данных' : this.low ?
       (this.muted ? '⚠ Низкий уровень · звук заглушён' : '⚠ Достигнут нижний порог воды') : 'Уровень воды в норме';
     root.querySelector('.alarm').classList.toggle('alert', this.low);
     root.querySelector('#enable').textContent = this.enabled ? 'Выключить звук' : 'Включить звук';
@@ -304,6 +309,176 @@ class WaterTankCard extends HTMLElement {
   }
 }
 
+class WaterTankCardEditor extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: 'open' });
+    this.definition = WaterTankCard.getConfigForm();
+    this.fields = this.definition.schema.flatMap(section => section.schema || [section]);
+    this.controls = new Map();
+  }
+
+  setConfig(config) {
+    this._config = { ...config };
+    this.render();
+  }
+
+  set hass(value) {
+    this._hass = value;
+    this.render();
+  }
+
+  connectedCallback() {
+    this.render();
+    // HA loads its form and entity selector lazily. Loading the built-in editor
+    // makes those controls available also on versions without getConfigForm().
+    if (!this.loading) this.loading = this.loadForm();
+  }
+
+  async loadForm() {
+    try {
+      if (!customElements.get('ha-form') && window.loadCardHelpers) {
+        const helpers = await window.loadCardHelpers();
+        const card = helpers.createCardElement({ type: 'entities', entities: [] });
+        await customElements.whenDefined(card.localName);
+        await card.constructor.getConfigElement?.();
+      }
+    } catch (_) { /* The independent editor below remains fully usable. */ }
+    if (this.isConnected) this.render();
+  }
+
+  render() {
+    if (!this._config) return;
+    const native = !!customElements.get('ha-form');
+    if (!this.ready || this.native !== native) {
+      this.native = native;
+      this.ready = true;
+      this.controls.clear();
+      this.shadowRoot.innerHTML = `<style>
+        :host { display:block; color:var(--primary-text-color,#222); }
+        .version { margin-bottom:16px; color:var(--secondary-text-color,#666); font-size:12px; }
+        .field { display:grid; gap:8px; margin:0 0 20px; min-width:0; }
+        label, summary { font-weight:500; font-size:16px; }
+        input, select { width:100%; min-width:0; box-sizing:border-box; padding:14px 12px; font:inherit;
+          background:var(--secondary-background-color,#eee); color:var(--primary-text-color,#222);
+          border:1px solid var(--divider-color,#aaa); border-radius:8px; }
+        input:focus, select:focus { outline:2px solid var(--primary-color,#03a9f4); outline-offset:1px; }
+        .help { color:var(--secondary-text-color,#666); font-size:13px; line-height:1.5; }
+        details { border:1px solid var(--divider-color,#aaa); border-radius:12px; margin:16px 0; }
+        summary { cursor:pointer; padding:18px 16px; }
+        .section { padding:4px 16px 0; }
+      </style><div class="version">Water Tank Card · редактор 1.2.0</div><div id="fields"></div>`;
+      const container = this.shadowRoot.querySelector('#fields');
+      if (native) {
+        this.form = document.createElement('ha-form');
+        this.form.schema = this.definition.schema;
+        this.form.computeLabel = schema => this.definition.computeLabel(schema) || schema.title || schema.name;
+        this.form.computeHelper = this.definition.computeHelper;
+        this.form.addEventListener('value-changed', event => {
+          event.stopPropagation();
+          this.changed(event.detail.value);
+        });
+        container.append(this.form);
+      } else {
+        this.form = null;
+        for (const section of this.definition.schema) {
+          if (!section.schema) { this.addField(container, section); continue; }
+          const details = document.createElement('details');
+          details.open = !!section.expanded;
+          const summary = document.createElement('summary');
+          summary.textContent = section.title;
+          const body = document.createElement('div');
+          body.className = 'section';
+          details.append(summary, body);
+          for (const field of section.schema) this.addField(body, field);
+          container.append(details);
+        }
+      }
+    }
+    if (this.form) {
+      this.form.hass = this._hass;
+      this.form.data = this._config;
+    } else {
+      for (const [key, control] of this.controls) {
+        if (control.field.selector.entity) this.entityOptions(control);
+        control.input.value = this._config[key] ?? '';
+      }
+    }
+  }
+
+  addField(parent, field) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'field';
+    const label = document.createElement('label');
+    label.htmlFor = field.name;
+    label.textContent = this.definition.computeLabel(field) + (field.required ? ' *' : '');
+    const input = document.createElement(field.selector.text ? 'input' : 'select');
+    input.id = field.name;
+    input.required = !!field.required;
+    const control = { field, input };
+    if (field.selector.entity) {
+      const search = document.createElement('input');
+      search.type = 'search';
+      search.placeholder = 'Поиск по названию или ID';
+      search.setAttribute('aria-label', `Поиск: ${this.definition.computeLabel(field)}`);
+      control.search = search;
+      search.oninput = () => { this.entityOptions(control); input.value = this._config[field.name] ?? ''; };
+      wrapper.append(label, search, input);
+    } else {
+      if (field.selector.select) {
+        input.add(new Option('По умолчанию', ''));
+        for (const option of field.selector.select.options) input.add(new Option(option.label, option.value));
+      }
+      wrapper.append(label, input);
+    }
+    input.addEventListener(field.selector.text ? 'input' : 'change', () => this.changed({ [field.name]: input.value }));
+    const helper = this.definition.computeHelper(field);
+    if (helper) {
+      const help = document.createElement('div');
+      help.className = 'help';
+      help.id = `${field.name}-help`;
+      help.textContent = helper;
+      input.setAttribute('aria-describedby', help.id);
+      wrapper.append(help);
+    }
+    this.controls.set(field.name, control);
+    parent.append(wrapper);
+  }
+
+  entityOptions(control) {
+    const { input, field, search } = control;
+    const selected = this._config[field.name] || '';
+    const query = search.value.toLocaleLowerCase();
+    const domains = field.selector.entity.domain;
+    const options = Object.entries(this._hass?.states || {})
+      .filter(([id]) => domains.includes(id.split('.')[0]) || id === selected)
+      .map(([id, state]) => [id, `${state.attributes?.friendly_name || id} — ${id}`])
+      .filter(([id, label]) => id === selected || label.toLocaleLowerCase().includes(query))
+      .sort((a, b) => a[1].localeCompare(b[1]));
+    if (selected && !options.some(([id]) => id === selected)) options.unshift([selected, `${selected} (нет данных)`]);
+    const signature = JSON.stringify(options);
+    if (signature === control.signature) return;
+    control.signature = signature;
+    input.replaceChildren(new Option(field.required ? 'Выберите объект' : 'Не использовать', ''));
+    for (const [id, label] of options) input.add(new Option(label, id));
+  }
+
+  changed(values) {
+    if (!values || typeof values !== 'object') return;
+    const config = { ...this._config, type: 'custom:water-tank-card' };
+    for (const { name } of this.fields) {
+      if (!Object.prototype.hasOwnProperty.call(values, name)) continue;
+      const value = values[name];
+      if (value === '' || value == null) delete config[name];
+      else config[name] = value;
+    }
+    this._config = config;
+    this.render();
+    this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: { ...config } }, bubbles: true, composed: true }));
+  }
+}
+
+if (!customElements.get('water-tank-card-editor')) customElements.define('water-tank-card-editor', WaterTankCardEditor);
 if (!customElements.get('water-tank-card')) customElements.define('water-tank-card', WaterTankCard);
 window.customCards = window.customCards || [];
 window.customCards.push({ type: 'water-tank-card', name: 'Бак воды', description: 'Уровень воды и звуковая тревога на компьютере',

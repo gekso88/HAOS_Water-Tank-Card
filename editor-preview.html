@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Water Tank Card — визуальный редактор</title>
+<style>
+  *{box-sizing:border-box} body{margin:0;padding:28px;background:#101923;color:#eaf3fa;font:16px Arial,sans-serif;
+    --primary-text-color:#eaf3fa;--secondary-text-color:#a1b4c6;--secondary-background-color:#263747;
+    --divider-color:#3b5064;--primary-color:#03a9f4}
+  h1{margin:0 0 12px;font-size:26px} p{margin:0 0 24px;color:#a1b4c6;line-height:1.5}
+  main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px;max-width:1180px;margin:auto}
+  section{min-width:0} .editor{padding:24px;background:#1a2835;border:1px solid #34485b;border-radius:20px}
+  @media(max-width:750px){body{padding:16px}main{grid-template-columns:1fr}}
+</style>
+<h1>Настройка карточки «Бак воды»</h1>
+<p>Демонстрация с тестовыми объектами. Измените настройки слева — карточка справа обновится.</p>
+<main><section class="editor"></section><section class="preview"></section></main>
+<script>
+customElements.define('ha-card',class extends HTMLElement {
+  constructor(){
+    super();
+    this.attachShadow({mode:'open'}).innerHTML='<style>:host{display:block;background:#1a2835;border:1px solid #34485b;border-radius:20px;box-sizing:border-box}</style><slot></slot>';
+  }
+});
+</script>
+<script src="water-tank-card.js"></script>
+<script>
+const mockHass={connected:true,states:{
+  'sensor.demo_level':{state:'78',attributes:{friendly_name:'Уровень воды',unit_of_measurement:'%'}},
+  'sensor.demo_volume':{state:'780',attributes:{friendly_name:'Объём воды',unit_of_measurement:'L'}},
+  'sensor.demo_distance':{state:'26.4',attributes:{friendly_name:'Расстояние до воды',unit_of_measurement:'cm'}},
+  'number.demo_threshold':{state:'30',attributes:{friendly_name:'Нижний порог',unit_of_measurement:'%'}},
+  'binary_sensor.demo_valid':{state:'on',attributes:{friendly_name:'Достоверность измерения'}}
+}};
+const config={type:'custom:water-tank-card',name:'Бак воды · 1000 л',entity:'sensor.demo_level',
+  volume_entity:'sensor.demo_volume',distance_entity:'sensor.demo_distance',
+  threshold_entity:'number.demo_threshold',valid_entity:'binary_sensor.demo_valid',
+  tank_shape:'vertical',tank_color:'blue'};
+const card=document.createElement('water-tank-card');
+card.setConfig(config);
+card.hass=mockHass;
+document.querySelector('.preview').append(card);
+const editor=customElements.get('water-tank-card').getConfigElement();
+editor.setConfig(config);
+editor.hass=mockHass;
+editor.addEventListener('config-changed',event=>card.setConfig(event.detail.config));
+document.querySelector('.editor').append(editor);
+editor.shadowRoot.querySelectorAll('details')[1].open=true;
+</script>
+</html>

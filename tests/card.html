@@ -5,6 +5,7 @@
 <div id="fixture"></div><pre id="result">RUNNING</pre>
 <script src="../water-tank-card.js"></script>
 <script>
+(async () => {
 try {
   const Card = customElements.get('water-tank-card');
   let count = 0;
@@ -31,6 +32,94 @@ try {
   const pair = Card.getStubConfig({states:{'sensor.demo_water_level':{}, 'number.demo_low_level_threshold':{}, 'sensor.demo_water_volume':{}}});
   check(pair.entity === 'sensor.demo_water_level' && pair.threshold_entity === 'number.demo_low_level_threshold', 'Wemos pairing');
   check(!Card.getStubConfig({states:{'sensor.a_water_level':{},'sensor.b_water_level':{}}}).entity, 'Ambiguous tanks must be selected by user');
+
+  // The legacy entry point must work even when HA never calls getConfigForm.
+  const empty = document.createElement('water-tank-card');
+  empty.setConfig({type:'custom:water-tank-card'});
+  empty.hass = {states:{}};
+  document.querySelector('#fixture').append(empty);
+  check(empty.shadowRoot.querySelector('.alarm').textContent.includes('Выберите датчик'), 'Empty card shows setup guidance instead of throwing');
+  check(!empty.low && !empty.timer, 'Unconfigured card must not sound an alarm');
+  empty.remove();
+  const editor = Card.getConfigElement();
+  check(editor.localName === 'water-tank-card-editor' && typeof editor.setConfig === 'function', 'Legacy editor entry point returns a registered editor');
+  const original = {type:'custom:water-tank-card',grid_options:{columns:6},visibility:[{condition:'screen',media_query:'(min-width: 400px)'}]};
+  const originalText = JSON.stringify(original);
+  editor.setConfig(original);
+  editor.hass = {states:{
+    'sensor.tank_level':{state:'78',attributes:{friendly_name:'Уровень бака'}},
+    'number.tank_threshold':{state:'30',attributes:{friendly_name:'Нижний порог'}},
+    'sensor.tank_volume':{state:'780',attributes:{friendly_name:'Объём бака'}}
+  }};
+  document.querySelector('#fixture').append(editor);
+  let edited, changes = 0, composed = false;
+  document.querySelector('#fixture').addEventListener('config-changed', event => {
+    edited = event.detail.config; changes++; composed = event.composed;
+  });
+  const editRoot = editor.shadowRoot;
+  const select = (key, value) => {
+    const input = editRoot.getElementById(key);
+    check(!!input, `Visible editor control: ${key}`);
+    input.value = value;
+    input.dispatchEvent(new Event(input.tagName === 'INPUT' ? 'input' : 'change', {bubbles:true}));
+  };
+  select('entity', 'sensor.tank_level');
+  select('threshold_entity', 'number.tank_threshold');
+  select('volume_entity', 'sensor.tank_volume');
+  select('tank_shape', 'horizontal');
+  select('tank_color', 'white');
+  select('name', 'Мой бак');
+  check(changes === 6 && composed, 'Each edit emits a bubbling composed config-changed event');
+  check(edited.entity === 'sensor.tank_level' && edited.threshold_entity === 'number.tank_threshold', 'Entity selections are saved without YAML');
+  check(edited.tank_shape === 'horizontal' && edited.tank_color === 'white' && edited.name === 'Мой бак', 'Appearance and name are saved');
+  check(edited.grid_options.columns === 6 && edited.visibility[0].condition === 'screen', 'Layout and visibility survive editing');
+  check(JSON.stringify(original) === originalText, 'Editor does not mutate original config');
+  const preview = document.createElement('water-tank-card');
+  preview.setConfig(edited);
+  preview.hass = editor._hass;
+  check(preview.shadowRoot.querySelector('.percent').textContent === '78.0%', 'Saved config drives real preview');
+  check(preview.shadowRoot.querySelector('.vessel').dataset.shape === 'horizontal', 'Saved shape drives real preview');
+  const search = editRoot.querySelector('input[type="search"]');
+  search.value = 'tank_threshold';
+  search.dispatchEvent(new Event('input'));
+  check(editRoot.getElementById('entity').value === 'sensor.tank_level', 'Search preserves current selection');
+  check(Array.from(editRoot.getElementById('entity').options).some(option => option.value === 'number.tank_threshold'), 'Entity search finds an ID');
+  select('volume_entity', '');
+  check(!('volume_entity' in edited), 'Clearing optional field removes it from YAML');
+  const beforeHass = changes;
+  editor.hass = {states:{}};
+  check(changes === beforeHass && editRoot.getElementById('entity').value === 'sensor.tank_level', 'State refresh does not reset configured entities or emit changes');
+  editor.setConfig({type:'custom:water-tank-card',name:'From YAML',entity:'sensor.tank_level'});
+  check(editRoot.getElementById('name').value === 'From YAML' && editRoot.getElementById('threshold_entity').value === '', 'Switching from YAML refreshes visual inputs');
+  editor.remove();
+
+  // Simulate HA loading its built-in editor asynchronously after ours opens.
+  let loadNative;
+  let requestedCard;
+  window.loadCardHelpers = () => new Promise(resolve => { loadNative = resolve; });
+  const nativeEditor = Card.getConfigElement();
+  nativeEditor.setConfig({...original,entity:'sensor.tank_level',volume_entity:'sensor.tank_volume'});
+  nativeEditor.hass = {states:{}};
+  document.querySelector('#fixture').append(nativeEditor);
+  check(!!nativeEditor.shadowRoot.getElementById('entity'), 'Fallback remains usable while native form loads');
+  customElements.define('test-entities-card', class extends HTMLElement {
+    static async getConfigElement() {
+      customElements.define('ha-form', class extends HTMLElement {});
+      return document.createElement('div');
+    }
+  });
+  loadNative({createCardElement: config => {
+    requestedCard = config;
+    return document.createElement('test-entities-card');
+  }});
+  await nativeEditor.loading;
+  check(requestedCard.type === 'entities' && requestedCard.entities.length === 0, 'Native loading uses a harmless built-in card');
+  const nativeForm = nativeEditor.shadowRoot.querySelector('ha-form');
+  check(!!nativeForm && nativeForm.schema.length > 0 && typeof nativeForm.computeLabel === 'function', 'Native form gets schema and labels');
+  check(nativeForm.data.entity === 'sensor.tank_level' && nativeForm.hass === nativeEditor._hass, 'Native loading retains config and hass');
+  nativeForm.dispatchEvent(new CustomEvent('value-changed',{detail:{value:{...nativeForm.data,volume_entity:undefined,tank_color:'metal'}},bubbles:true,composed:true}));
+  check(!('volume_entity' in edited) && edited.tank_color === 'metal' && edited.grid_options.columns === 6, 'Native form changes and clearing retain unrelated config');
+  nativeEditor.remove();
 
   const config = {entity:'sensor.test_level',threshold_entity:'number.test_threshold',volume_entity:'sensor.test_volume',valid_entity:'binary_sensor.test_valid'};
   const card = document.createElement('water-tank-card');
@@ -89,4 +178,5 @@ try {
 } catch (error) {
   document.querySelector('#result').textContent = `FAIL: ${error.message}`;
 }
+})();
 </script>
