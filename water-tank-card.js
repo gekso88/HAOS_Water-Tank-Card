@@ -1,5 +1,66 @@
 /* Standalone Home Assistant card. No changes to firmware or phone notifications. */
 class WaterTankCard extends HTMLElement {
+  // Home Assistant renders the native entity pickers, expandable sections and preview.
+  static getConfigForm() {
+    const numericEntity = { entity: { domain: ['sensor', 'number', 'input_number'] } };
+    const labels = {
+      entity: 'Уровень воды (%)', name: 'Название карточки', volume_entity: 'Объём воды (литры)',
+      distance_entity: 'Расстояние до воды (см)', valid_entity: 'Достоверность измерения (необязательно)',
+      threshold_entity: 'Нижний порог (%)', tank_shape: 'Форма бака', tank_color: 'Материал и цвет'
+    };
+    const helpers = {
+      entity: 'Выберите датчик процентов 0–100. Датчик литров указывается отдельно.',
+      volume_entity: 'Необязательно. Текущий объём воды, а не полная ёмкость бака.',
+      distance_entity: 'Необязательно. Расстояние от датчика до поверхности воды.',
+      valid_entity: 'Только объект со значениями True/False или on/off. Если такого нет, оставьте пустым.',
+      threshold_entity: 'Отдельный объект порога, например Low level threshold. Не выбирайте здесь сам уровень воды. Звук и громкость настраиваются кнопками в карточке.'
+    };
+    return {
+      schema: [
+        { name: 'entity', required: true, selector: numericEntity },
+        { name: 'content', type: 'expandable', title: 'Содержимое', icon: 'mdi:text-box-outline', flatten: true,
+          schema: [
+            { name: 'name', selector: { text: {} } },
+            { name: 'volume_entity', selector: numericEntity },
+            { name: 'distance_entity', selector: numericEntity },
+            { name: 'valid_entity', selector: { entity: { domain: ['binary_sensor', 'sensor', 'input_boolean'] } } }
+          ] },
+        { name: 'appearance', type: 'expandable', title: 'Внешний вид', icon: 'mdi:palette-outline', flatten: true,
+          schema: [
+            { name: 'tank_shape', selector: { select: { mode: 'dropdown', options: [
+              { value: 'vertical', label: 'Круглый вертикальный' }, { value: 'square', label: 'Квадратный' },
+              { value: 'horizontal', label: 'Горизонтальный' }
+            ] } } },
+            { name: 'tank_color', selector: { select: { mode: 'dropdown', options: [
+              { value: 'blue', label: 'Синий пластик' }, { value: 'white', label: 'Белый пластик' },
+              { value: 'metal', label: 'Красный металл' }
+            ] } } }
+          ] },
+        { name: 'alarm', type: 'expandable', title: 'Оповещения', icon: 'mdi:bell-outline', flatten: true, expanded: true,
+          schema: [{ name: 'threshold_entity', required: true, selector: numericEntity }] }
+      ],
+      computeLabel: schema => labels[schema.name],
+      computeHelper: schema => helpers[schema.name]
+    };
+  }
+
+  static getStubConfig(hass) {
+    const config = { name: 'Бак воды', tank_shape: 'vertical', tank_color: 'blue' };
+    const states = hass?.states || {};
+    const levels = Object.keys(states).filter(id => id.startsWith('sensor.') && id.endsWith('_water_level'));
+    // Only pair the known Wemos naming scheme when there is a single unambiguous tank.
+    if (levels.length === 1) {
+      config.entity = levels[0];
+      const base = levels[0].slice('sensor.'.length, -'_water_level'.length);
+      const companions = {
+        volume_entity: `sensor.${base}_water_volume`, distance_entity: `sensor.${base}_water_distance`,
+        valid_entity: `sensor.${base}_measurement_valid`, threshold_entity: `number.${base}_low_level_threshold`
+      };
+      for (const [key, id] of Object.entries(companions)) if (states[id]) config[key] = id;
+    }
+    return config;
+  }
+
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
@@ -41,8 +102,8 @@ class WaterTankCard extends HTMLElement {
     if (this.audio) this.audio.close().catch(() => {});
     this.audio = null;
   }
-  getCardSize() { return 7; }
-  getGridOptions() { return { columns: 12, rows: 7, min_columns: 6 }; }
+  getCardSize() { return 10; }
+  getGridOptions() { return { columns: 12, rows: 'auto', min_columns: 6 }; }
 
   number(entity) {
     const state = this._hass?.states?.[entity]?.state;
@@ -56,7 +117,7 @@ class WaterTankCard extends HTMLElement {
       <style>
         ha-card { padding:22px; color:var(--primary-text-color); }
         h2 { margin:0 0 16px; font-size:21px; }
-        .main { display:flex; gap:20px; flex-wrap:wrap; align-items:center; justify-content:center; }
+        .main { display:flex; flex-direction:column; gap:8px; align-items:center; }
         .vessel { --shell:#167bc0; --edge:#084d87; position:relative; width:210px; height:225px; flex-shrink:0; }
         .vessel[data-color="white"] { --shell:#d9e0e5; --edge:#82929d; }
         .vessel[data-color="metal"] { --shell:#b65c48; --edge:#783b30; }
@@ -84,7 +145,14 @@ class WaterTankCard extends HTMLElement {
         .water { position:absolute; bottom:0; width:100%; background:linear-gradient(#39c8ed,#177bc7);
           transition:height 1s; border-top:3px solid #9ce9ff; box-sizing:border-box; }
         .tank:after { content:''; position:absolute; inset:15px 14px; border-left:6px solid #ffffff30; border-radius:10px; }
-        .percent { font-size:36px; font-weight:700; } .liters { font-size:21px; margin:8px 0; }
+        .readings { position:absolute; inset:0; z-index:3; display:flex; align-items:center; justify-content:center;
+          padding:8px; box-sizing:border-box; pointer-events:none; }
+        .readings-panel { max-width:100%; box-sizing:border-box; padding:7px 9px; border-radius:12px;
+          background:#071d32d9; color:#fff; text-align:center; text-shadow:0 1px 2px #0008;
+          font-variant-numeric:tabular-nums; transform:translateY(-4px); }
+        .percent { font-size:29px; line-height:1.15; font-weight:750; white-space:nowrap; }
+        .liters { font-size:16px; line-height:1.3; margin-top:5px; overflow-wrap:anywhere; }
+        .meta { text-align:center; }
         .meta, .hint { color:var(--secondary-text-color); font-size:13px; line-height:1.6; }
         .alarm { min-height:26px; margin:16px 0 8px; font-weight:600; }
         .alert { color:#ef5350; animation:blink 1.2s infinite; }
@@ -99,9 +167,10 @@ class WaterTankCard extends HTMLElement {
       <ha-card>
         <h2></h2>
         <div class="main"><div class="vessel" role="img" aria-label="Бак воды">
-          <div class="feet"></div><div class="tank"><div class="water"></div><div class="ribs"></div></div>
+          <div class="feet"></div><div class="tank"><div class="water"></div><div class="ribs"></div>
+            <div class="readings"><div class="readings-panel"><div class="percent">—</div><div class="liters">—</div></div></div></div>
           <div class="lid"></div><div class="outlet"></div></div>
-          <div><div class="percent">—</div><div class="liters">—</div><div class="meta"></div></div>
+          <div class="meta"></div>
         </div>
         <div class="alarm" role="status" aria-live="polite"></div>
         <div class="controls">
@@ -129,7 +198,7 @@ class WaterTankCard extends HTMLElement {
       const select = root.querySelector(`#${id}`);
       for (const [value, label] of Object.entries(options)) select.add(new Option(label, value));
       select.value = this[id];
-      select.onchange = e => { this[id] = e.target.value; this.appearance(); this.save(); };
+      select.onchange = e => { this[id] = e.target.value; this.appearance(); this.save(); this.update(); };
     }
     this.appearance();
     root.querySelector('input').oninput = e => { this.volume = Number(e.target.value) / 100; this.save(); };
@@ -182,8 +251,9 @@ class WaterTankCard extends HTMLElement {
     root.querySelector('.percent').textContent = valid ? `${level.toFixed(1)}%` : '—';
     const liters = this.number(this.config.volume_entity);
     root.querySelector('.liters').textContent = valid && liters !== null && liters >= 0 ? `${liters.toFixed(1)} л` : '— л';
+    root.querySelector('.vessel').setAttribute('aria-label', `${this.shapes[this.shape]}, ${root.querySelector('.percent').textContent}, ${root.querySelector('.liters').textContent}`);
     const distance = this.number(this.config.distance_entity);
-    root.querySelector('.meta').textContent = `Порог: ${threshold === null ? '—' : threshold}% · Расстояние: ${distance !== null && distance >= 0 ? distance.toFixed(1) + ' см' : 'нет данных'}`;
+    root.querySelector('.meta').textContent = `Порог: ${threshold === null ? '—' : Number(threshold.toFixed(1))}% · Расстояние: ${distance !== null && distance >= 0 ? distance.toFixed(1) + ' см' : 'нет данных'}`;
     root.querySelector('.alarm').textContent = !valid ? 'Нет достоверных данных' : this.low ?
       (this.muted ? '⚠ Низкий уровень · звук заглушён' : '⚠ Достигнут нижний порог воды') : 'Уровень воды в норме';
     root.querySelector('.alarm').classList.toggle('alert', this.low);
@@ -236,4 +306,5 @@ class WaterTankCard extends HTMLElement {
 
 if (!customElements.get('water-tank-card')) customElements.define('water-tank-card', WaterTankCard);
 window.customCards = window.customCards || [];
-window.customCards.push({ type: 'water-tank-card', name: 'Бак воды', description: 'Уровень воды и звуковая тревога на компьютере' });
+window.customCards.push({ type: 'water-tank-card', name: 'Бак воды', description: 'Уровень воды и звуковая тревога на компьютере',
+  documentationURL: 'https://github.com/gekso88/HAOS_Water-Tank-Card#readme' });

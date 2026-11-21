@@ -1,0 +1,92 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Water Tank Card browser checks</title>
+<style>body{font-family:sans-serif}ha-card{display:block}#fixture{width:360px}</style>
+<div id="fixture"></div><pre id="result">RUNNING</pre>
+<script src="../water-tank-card.js"></script>
+<script>
+try {
+  const Card = customElements.get('water-tank-card');
+  let count = 0;
+  const check = (condition, message) => { if (!condition) throw new Error(message); count++; };
+  const fields = [];
+  function flatten(schema) {
+    for (const field of schema) {
+      if (field.schema) {
+        check(field.flatten === true, 'Editor group must keep existing flat YAML keys');
+        flatten(field.schema);
+      } else fields.push(field);
+    }
+  }
+  const form = Card.getConfigForm();
+  flatten(form.schema);
+  for (const key of ['name','entity','threshold_entity','volume_entity','distance_entity','valid_entity','tank_shape','tank_color']) {
+    const field = fields.find(field => field.name === key);
+    check(!!field?.selector && !!form.computeLabel(field), `Editor field missing: ${key}`);
+  }
+  check(fields.find(f => f.name === 'entity').required, 'Level must be required');
+  check(fields.find(f => f.name === 'threshold_entity').required, 'Threshold must be required');
+  check(!fields.find(f => f.name === 'valid_entity').required, 'Validity must be optional');
+  check(!Card.getStubConfig({states:{'sensor.phone_battery':{state:'60'}}}).entity, 'Must not guess unrelated battery');
+  const pair = Card.getStubConfig({states:{'sensor.demo_water_level':{}, 'number.demo_low_level_threshold':{}, 'sensor.demo_water_volume':{}}});
+  check(pair.entity === 'sensor.demo_water_level' && pair.threshold_entity === 'number.demo_low_level_threshold', 'Wemos pairing');
+  check(!Card.getStubConfig({states:{'sensor.a_water_level':{},'sensor.b_water_level':{}}}).entity, 'Ambiguous tanks must be selected by user');
+
+  const config = {entity:'sensor.test_level',threshold_entity:'number.test_threshold',volume_entity:'sensor.test_volume',valid_entity:'binary_sensor.test_valid'};
+  const card = document.createElement('water-tank-card');
+  card.setConfig(config);
+  document.querySelector('#fixture').append(card);
+  const root = card.shadowRoot;
+  const state = (level, valid = 'on', connected = true) => ({connected,states:{
+    'sensor.test_level':{state:String(level)},'number.test_threshold':{state:'30'},
+    'sensor.test_volume':{state:String(Number(level)*10)},'binary_sensor.test_valid':{state:valid}
+  }});
+  card.hass = state(78);
+  for (const shape of ['vertical','square','horizontal']) {
+    root.querySelector('#shape').value = shape;
+    root.querySelector('#shape').dispatchEvent(new Event('change'));
+    const tank = root.querySelector('.tank').getBoundingClientRect();
+    const readings = root.querySelector('.readings-panel').getBoundingClientRect();
+    check(readings.left >= tank.left && readings.right <= tank.right && readings.top >= tank.top && readings.bottom <= tank.bottom, `Readings outside ${shape} tank`);
+    check(root.querySelector('.tank .percent').textContent === '78.0%', 'Percent inside tank');
+    check(root.querySelector('.tank .liters').textContent === '780.0 л', 'Liters inside tank');
+  }
+  root.querySelector('#color').value = 'white';
+  root.querySelector('#color').dispatchEvent(new Event('change'));
+  check(root.querySelector('.vessel').dataset.color === 'white', 'Color selector updates tank');
+  check(getComputedStyle(root.querySelector('.readings-panel')).color === 'rgb(255, 255, 255)', 'Readings keep contrasting color on white tank');
+  card.hass = state(31);
+  check(!card.low, 'No alarm above threshold');
+  card.hass = state(30);
+  check(card.low && root.querySelector('.alarm').classList.contains('alert'), 'Alarm at threshold');
+  check(root.querySelector('.water').style.height === '30%', 'Water fill at threshold');
+  let plays = 0;
+  card.play = () => { plays++; };
+  card.enabled = true;
+  card.update();
+  check(plays === 1 && !!card.timer, 'Enabled alarm starts and repeats');
+  card.hass = state(29);
+  check(plays === 1, 'Repeated state does not restart sound');
+  root.querySelector('#mute').click();
+  check(card.muted && !card.timer, 'Mute stops alarm timer');
+  card.hass = state('unavailable');
+  check(card.muted && !card.low && root.querySelector('.percent').textContent === '—', 'Missing data is not empty and preserves mute');
+  card.hass = state(28);
+  check(card.muted && !card.timer, 'Mute survives missing data');
+  card.hass = state(31);
+  check(!card.muted, 'Recovery clears mute');
+  card.hass = state(18);
+  check(plays === 2 && card.timer, 'New low starts new alarm');
+  card.hass = state(18, 'off');
+  check(!card.timer && root.querySelector('.liters').textContent === '— л', 'Invalid measurement stops sound and hides volume');
+  card.hass = state(18, 'on', false);
+  check(!card.timer && !card.low, 'Disconnect suppresses alarm');
+  card.hass = state(0);
+  check(card.low && root.querySelector('.percent').textContent === '0.0%', 'Zero is a valid empty tank');
+  card.remove();
+  check(!card.timer && !card.enabled, 'Removal stops sound');
+  document.querySelector('#result').textContent = `PASS: ${count} browser checks`;
+} catch (error) {
+  document.querySelector('#result').textContent = `FAIL: ${error.message}`;
+}
+</script>
