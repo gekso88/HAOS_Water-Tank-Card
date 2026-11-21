@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<title>Water Tank Card — демонстрация</title>
+<style>
+  * {box-sizing:border-box} body{margin:0;padding:32px;background:#101923;color:#eaf3fa;font-family:Arial,sans-serif;
+  --primary-text-color:#eaf3fa;--secondary-text-color:#a1b4c6;--secondary-background-color:#263747;--divider-color:#3b5064}
+  h1{margin:0 0 10px;font-size:30px} p{color:#a1b4c6;margin:0 0 26px}
+  main{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+  ha-card{display:block;background:#1a2835;border:1px solid #34485b;border-radius:20px;min-height:570px}
+  water-tank-card{min-width:0} footer{margin-top:22px;color:#a1b4c6;font-size:14px}
+</style>
+<h1>Water Tank Card</h1>
+<p>Три формы бака · Уровень и объём · Звуковая тревога</p>
+<main></main>
+<footer>Демонстрационные данные · Звук включается пользователем на компьютере</footer>
+<script>
+customElements.define('ha-card', class extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({mode:'open'}).innerHTML = '<style>:host{display:block;background:#1a2835;border:1px solid #34485b;border-radius:20px;min-height:570px;box-sizing:border-box}</style><slot></slot>';
+  }
+});
+</script>
+<script src="water-tank-card.js"></script>
+<script>
+const alarm = new URLSearchParams(location.search).has('alarm');
+const forms = ['vertical','square','horizontal'];
+const names = ['Круглый бак','Квадратный бак','Горизонтальный бак'];
+forms.forEach((shape,i)=>{
+  const card=document.createElement('water-tank-card');
+  card.setConfig({name:names[i],entity:'sensor.demo_level',threshold_entity:'number.demo_threshold',
+    volume_entity:'sensor.demo_volume',distance_entity:'sensor.demo_distance',tank_shape:shape,
+    tank_color:alarm ? ['blue','white','metal'][i] : 'blue'});
+  const percent=alarm ? 18 : [78,62,45][i];
+  card.hass={connected:true,states:{'sensor.demo_level':{state:String(percent)},'number.demo_threshold':{state:'30'},
+    'sensor.demo_volume':{state:String(percent*10)},'sensor.demo_distance':{state:String(120*(1-percent/100))}}};
+  document.querySelector('main').append(card);
+  if(alarm) card.shadowRoot.querySelector('details').open=true;
+});
+</script>
+</html>
