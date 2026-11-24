@@ -1,4 +1,4 @@
-/* Water Tank Card 1.2.0 — standalone card and visual editor. */
+/* Water_level_tank_card 1.2.1 — standalone card and visual editor. */
 class WaterTankCard extends HTMLElement {
   static getConfigElement() {
     return document.createElement('water-tank-card-editor');
@@ -367,7 +367,7 @@ class WaterTankCardEditor extends HTMLElement {
         details { border:1px solid var(--divider-color,#aaa); border-radius:12px; margin:16px 0; }
         summary { cursor:pointer; padding:18px 16px; }
         .section { padding:4px 16px 0; }
-      </style><div class="version">Water Tank Card · редактор 1.2.0</div><div id="fields"></div>`;
+      </style><div class="version">Water_level_tank_card · версия 1.2.1</div><div id="fields"></div>`;
       const container = this.shadowRoot.querySelector('#fields');
       if (native) {
         this.form = document.createElement('ha-form');
@@ -481,5 +481,5 @@ class WaterTankCardEditor extends HTMLElement {
 if (!customElements.get('water-tank-card-editor')) customElements.define('water-tank-card-editor', WaterTankCardEditor);
 if (!customElements.get('water-tank-card')) customElements.define('water-tank-card', WaterTankCard);
 window.customCards = window.customCards || [];
-window.customCards.push({ type: 'water-tank-card', name: 'Бак воды', description: 'Уровень воды и звуковая тревога на компьютере',
+window.customCards.push({ type: 'water-tank-card', name: 'Water_level_tank_card', preview: true, description: 'Бак воды: проценты, литры и звуковая тревога · v1.2.1',
   documentationURL: 'https://github.com/gekso88/HAOS_Water-Tank-Card#readme' });
