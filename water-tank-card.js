@@ -1,4 +1,4 @@
-/* Water_level_tank_card 1.2.1 — standalone card and visual editor. */
+/* Water_level_tank_card 1.2.2 — standalone card and visual editor. */
 class WaterTankCard extends HTMLElement {
   static getConfigElement() {
     return document.createElement('water-tank-card-editor');
@@ -158,6 +158,10 @@ class WaterTankCard extends HTMLElement {
         .liters { font-size:16px; line-height:1.3; margin-top:5px; overflow-wrap:anywhere; }
         .meta { text-align:center; }
         .meta, .hint { color:var(--secondary-text-color); font-size:13px; line-height:1.6; }
+        .connection { display:flex; align-items:center; gap:8px; margin:8px 0; font-weight:600; color:var(--secondary-text-color,#888); }
+        .connection[data-state="online"] { color:#39b875; }
+        .connection[data-state="offline"] { color:#ef6558; }
+        .connection-icon { width:20px; height:20px; flex:none; }
         .alarm { min-height:26px; margin:16px 0 8px; font-weight:600; }
         .alert { color:#ef5350; animation:blink 1.2s infinite; }
         @keyframes blink { 50% { opacity:.4; } }
@@ -176,6 +180,7 @@ class WaterTankCard extends HTMLElement {
           <div class="lid"></div><div class="outlet"></div></div>
           <div class="meta"></div>
         </div>
+        <div class="connection" role="status" aria-live="polite"><svg class="connection-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8a14 14 0 0 1 18 0M6 12a9 9 0 0 1 12 0M9 16a4 4 0 0 1 6 0"/><circle cx="12" cy="20" r="1"/><path class="connection-slash" d="M3 3l18 18"/></svg><span></span></div>
         <div class="alarm" role="status" aria-live="polite"></div>
         <div class="controls">
           <button id="enable"></button><button id="mute">Заглушить тревогу</button>
@@ -243,13 +248,23 @@ class WaterTankCard extends HTMLElement {
     const level = this.number(this.config.entity);
     const threshold = this.number(this.config.threshold_entity);
     const validity = this.config.valid_entity ? this._hass?.states?.[this.config.valid_entity]?.state : null;
-    const valid = this._hass?.connected !== false && level !== null && level >= 0 && level <= 100 &&
+    // The validity sensor stays available on measurement errors, but HA marks it
+    // unavailable when MQTT availability/expiry reports a lost device.
+    const connectionState = this._hass?.states?.[this.config.valid_entity || this.config.entity]?.state;
+    const offline = this._hass?.connected === false || connectionState === 'unavailable';
+    const online = !offline && connectionState != null && connectionState !== 'unknown';
+    const valid = !offline && level !== null && level >= 0 && level <= 100 &&
       threshold !== null && threshold >= 0 && threshold <= 100 &&
       (!this.config.valid_entity || ['true', 'on', '1'].includes(String(validity).toLowerCase()));
     // A missing measurement is not an empty tank and does not acknowledge an existing alarm.
     if (valid && level > threshold) this.muted = false;
     this.low = valid && level <= threshold;
     const root = this.shadowRoot;
+    const connection = root.querySelector('.connection');
+    connection.dataset.state = offline ? 'offline' : online ? 'online' : 'unknown';
+    connection.querySelector('span').textContent = this._hass?.connected === false ? 'Нет связи с Home Assistant' :
+      offline ? 'Датчик не в сети' : online ? 'Датчик в сети' : 'Состояние подключения неизвестно';
+    connection.querySelector('.connection-slash').style.display = offline ? '' : 'none';
     root.querySelector('.water').style.height = `${valid ? level : 0}%`;
     root.querySelector('.water').style.background = this.low ? '#e85c49' : '';
     root.querySelector('.percent').textContent = valid ? `${level.toFixed(1)}%` : '—';
@@ -259,7 +274,7 @@ class WaterTankCard extends HTMLElement {
     const distance = this.number(this.config.distance_entity);
     root.querySelector('.meta').textContent = `Порог: ${threshold === null ? '—' : Number(threshold.toFixed(1))}% · Расстояние: ${distance !== null && distance >= 0 ? distance.toFixed(1) + ' см' : 'нет данных'}`;
     const configured = !!this.config.entity && !!this.config.threshold_entity;
-    root.querySelector('.alarm').textContent = !configured ? 'Выберите датчик уровня и нижний порог в визуальном редакторе карточки' : !valid ? 'Нет достоверных данных' : this.low ?
+    root.querySelector('.alarm').textContent = !configured ? 'Выберите датчик уровня и нижний порог в визуальном редакторе карточки' : offline ? 'Измерения недоступны — проверьте питание и подключение датчика' : !valid ? 'Нет достоверных данных' : this.low ?
       (this.muted ? '⚠ Низкий уровень · звук заглушён' : '⚠ Достигнут нижний порог воды') : 'Уровень воды в норме';
     root.querySelector('.alarm').classList.toggle('alert', this.low);
     root.querySelector('#enable').textContent = this.enabled ? 'Выключить звук' : 'Включить звук';
@@ -367,7 +382,7 @@ class WaterTankCardEditor extends HTMLElement {
         details { border:1px solid var(--divider-color,#aaa); border-radius:12px; margin:16px 0; }
         summary { cursor:pointer; padding:18px 16px; }
         .section { padding:4px 16px 0; }
-      </style><div class="version">Water_level_tank_card · версия 1.2.1</div><div id="fields"></div>`;
+      </style><div class="version">Water_level_tank_card · версия 1.2.2</div><div id="fields"></div>`;
       const container = this.shadowRoot.querySelector('#fields');
       if (native) {
         this.form = document.createElement('ha-form');
@@ -481,5 +496,5 @@ class WaterTankCardEditor extends HTMLElement {
 if (!customElements.get('water-tank-card-editor')) customElements.define('water-tank-card-editor', WaterTankCardEditor);
 if (!customElements.get('water-tank-card')) customElements.define('water-tank-card', WaterTankCard);
 window.customCards = window.customCards || [];
-window.customCards.push({ type: 'water-tank-card', name: 'Water_level_tank_card', preview: true, description: 'Бак воды: проценты, литры и звуковая тревога · v1.2.1',
+window.customCards.push({ type: 'water-tank-card', name: 'Water_level_tank_card', preview: true, description: 'Бак воды: проценты, литры и звуковая тревога · v1.2.2',
   documentationURL: 'https://github.com/gekso88/HAOS_Water-Tank-Card#readme' });

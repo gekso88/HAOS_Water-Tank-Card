@@ -131,6 +131,16 @@ try {
     'sensor.test_volume':{state:String(Number(level)*10)},'binary_sensor.test_valid':{state:valid}
   }});
   card.hass = state(78);
+  check(root.querySelector('.connection').dataset.state === 'online', 'Valid sensor is online');
+  card.hass = state(78, 'off');
+  check(root.querySelector('.connection').dataset.state === 'online', 'Measurement error is not a connection failure');
+  card.hass = state(78, 'unavailable');
+  check(root.querySelector('.connection').textContent.includes('Датчик не в сети') && root.querySelector('.percent').textContent === '—', 'Offline sensor hides even retained numeric readings');
+  card.hass = state(78, 'unknown');
+  check(root.querySelector('.connection').dataset.state === 'unknown', 'Unknown availability is not reported online');
+  card.hass = state(78, 'on', false);
+  check(root.querySelector('.connection').textContent.includes('Нет связи с Home Assistant'), 'HA disconnect has a separate status');
+  card.hass = state(78);
   for (const shape of ['vertical','square','horizontal']) {
     root.querySelector('#shape').value = shape;
     root.querySelector('#shape').dispatchEvent(new Event('change'));
